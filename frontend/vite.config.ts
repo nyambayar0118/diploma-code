@@ -13,10 +13,15 @@ export default defineConfig({
         description: 'Сонирхолд суурилсан газар санал болгох, маршрут төлөвлөх систем',
         lang: 'mn',
         theme_color: '#1f6feb',
-        background_color: '#ffffff',
+        background_color: '#121722',
         display: 'standalone',
         start_url: '/',
-        icons: [{ src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
+        // Android needs 192 and 512 PNGs to offer "install"; the maskable one may be cropped to a circle
+        icons: [
+          { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
       },
       workbox: {
         // API and map tiles must always come from the network
