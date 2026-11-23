@@ -1,15 +1,24 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import PageHeader from '../components/PageHeader'
-import { api, ApiError, type GroupMember, type GroupOptions, type GroupView, type TransportMode } from '../api'
+import Avatar, { AvatarStack } from '../components/Avatar'
+import Icon from '../components/Icon'
+import { api, ApiError, type GroupMember, type GroupView, type TransportMode } from '../api'
 import { TRANSPORT_LABELS } from '../categoryLabels'
 import { MAIN_CATEGORY_COLORS } from '../places'
 import { GROUP_STATUS } from './GroupsPage'
 
 const START_LABELS: Record<string, string> = {
-  SHARED_LOCATION: 'хуваалцсан байршил',
-  PINNED: 'сонгосон цэг',
-  SAME_AS_INITIATOR: 'санаачлагчийн байршил',
+  SHARED_LOCATION: 'хуваалцсан байршлаас',
+  PINNED: 'сонгосон цэгээс',
+  SAME_AS_INITIATOR: 'санаачлагчийн байршлаас',
+}
+
+const STATUS_CLASS: Record<string, string> = {
+  RECOMMENDED: 'created',
+  SHARED: 'opened_in_maps',
+  COMPLETED: 'completed',
+  CANCELLED: 'cancelled',
 }
 
 /** One group plan: options with every member's travel time, sharing, invite link, own Maps link (АШ10, АШ24). */
@@ -17,7 +26,6 @@ export default function GroupPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [group, setGroup] = useState<GroupView | null>(null)
-  const [options, setOptions] = useState<GroupOptions | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -40,23 +48,14 @@ export default function GroupPage() {
     }
   }
 
-  const loadOptions = () => run(async () => setOptions(await api<GroupOptions>(`/api/groups/${id}/options`)))
-
-  const share = (placeId: number) => run(async () => {
-    setGroup(await api<GroupView>(`/api/groups/${id}/share`, { method: 'POST', body: { placeId } }))
-    setOptions(null)
-  })
-
   const changeMode = (m: GroupMember, transportMode: TransportMode) => run(async () => {
     setGroup(await api<GroupView>(`/api/groups/${id}/members`, {
       method: 'PATCH', body: { op: 'SET_START', memberId: m.id, transportMode },
     }))
-    setOptions(null)
   })
 
-  const remove = (m: GroupMember) => run(async () => {
+  const remove = (m: GroupMember) => window.confirm(`${m.name}-г төлөвлөгөөнөөс хасах уу?`) && run(async () => {
     setGroup(await api<GroupView>(`/api/groups/${id}/members`, { method: 'PATCH', body: { op: 'REMOVE', memberId: m.id } }))
-    setOptions(null)
   })
 
   const cancel = () => window.confirm('Төлөвлөгөөг цуцлах уу?') && run(async () => {
@@ -65,7 +64,12 @@ export default function GroupPage() {
   })
 
   if (!group) {
-    return <div className="page"><div className="card">{error ? <div className="error">{error}</div> : <p className="muted">Ачаалж байна…</p>}</div></div>
+    return (
+      <div className="page social">
+        <PageHeader title="Бүлгийн төлөвлөгөө" back="/groups" />
+        <section className="s-card">{error ? <div className="error">{error}</div> : <p className="muted">Ачаалж байна…</p>}</section>
+      </div>
+    )
   }
 
   const inviteUrl = group.inviteToken ? `${window.location.origin}/join/${group.inviteToken}` : null
@@ -74,111 +78,133 @@ export default function GroupPage() {
     if (navigator.share) {
       navigator.share({ title: 'Уулзах газар', text: `${group.meetingPlace?.name} дээр уулзъя`, url: inviteUrl }).catch(() => undefined)
     } else {
-      await navigator.clipboard.writeText(inviteUrl)
+      await navigator.clipboard.writeText(inviteUrl).catch(() => undefined)
       setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
     }
   }
   const mine = group.members.find((m) => m.me)
   const planning = group.status === 'RECOMMENDED' && group.initiator
-  const nameOf = (memberId: string) => group.members.find((m) => String(m.id) === memberId)?.name ?? '?'
+  const open = group.status === 'RECOMMENDED' || group.status === 'SHARED'
+  const place = group.meetingPlace
+  const color = place ? MAIN_CATEGORY_COLORS[place.mainCategory] ?? '#888' : undefined
 
   return (
-    <div className="page">
+    <div className="page social">
       <PageHeader title="Бүлгийн төлөвлөгөө" back="/groups" />
-      <div className="card wide">
-        <p className="lead">{GROUP_STATUS[group.status]} · {group.timeBudgetMinutes / 60} цаг</p>
-        {error && <div className="error">{error}</div>}
 
-        {group.meetingPlace && (
-          <div className="meeting">
-            <div className="sheet-cat">
-              <span className="dot" style={{ background: MAIN_CATEGORY_COLORS[group.meetingPlace.mainCategory] ?? '#888' }} />
-              {group.meetingPlace.categoryName}
-            </div>
-            <h2 style={{ margin: '2px 0 8px' }}>{group.meetingPlace.name}</h2>
-            <div className="sheet-actions" style={{ marginTop: 0 }}>
-              {mine?.mapsUrl && <a className="btn" href={mine.mapsUrl} target="_blank" rel="noopener noreferrer">Google Maps-ээр очих</a>}
-              <Link className="btn secondary" to={`/?place=${group.meetingPlace.id}`}>Газрын зураг дээр</Link>
-            </div>
-            {mine?.travelMinutes != null && <p className="muted">Танд ~{mine.travelMinutes} мин</p>}
+      {/* Summary */}
+      <section className="s-card plan-hero">
+        <div className="hero-top">
+          <span className={`badge status-${STATUS_CLASS[group.status]}`}>{GROUP_STATUS[group.status]}</span>
+          <span className="hero-meta"><Icon name="clock" size={14} /> {group.timeBudgetMinutes / 60} цаг</span>
+          <span className="hero-meta"><AvatarStack names={group.members.map((m) => m.name)} size={24} /> {group.members.length} хүн</span>
+        </div>
+
+        {place ? (
+          <div className="meet-place" style={{ ['--cat' as string]: color }}>
+            <span className="meet-pin"><Icon name="pin" size={22} /></span>
+            <span className="r-main">
+              <span className="meet-cat"><span className="dot" style={{ background: color }} />{place.categoryName}</span>
+              <span className="meet-name">{place.name}</span>
+              {mine?.travelMinutes != null && <span className="r-sub">Танд очиход ~{mine.travelMinutes} мин</span>}
+            </span>
+          </div>
+        ) : (
+          <p className="hero-empty">
+            {planning ? 'Уулзах газраа доорх хувилбаруудаас сонгоорой.' : 'Санаачлагч уулзах газраа хараахан сонгоогүй байна.'}
+          </p>
+        )}
+
+        {place && (
+          <div className="hero-actions">
+            {mine?.mapsUrl && (
+              <a className="btn" href={mine.mapsUrl} target="_blank" rel="noopener noreferrer">
+                <Icon name="navigation" size={16} /> Google Maps-ээр очих
+              </a>
+            )}
+            <Link className="btn secondary" to={`/?place=${place.id}`}><Icon name="layers" size={16} /> Газрын зураг дээр</Link>
           </div>
         )}
+      </section>
 
-        {inviteUrl && (
-          <>
-            <h2>Урилгын холбоос</h2>
-            <p className="muted">Холбоосыг нээсэн хүн бүр (бүртгэлгүй ч) өөрийн байршлаас ирэх Google Maps-ийн холбоосыг авна.
-              {group.inviteExpiresAt && ` ${new Date(group.inviteExpiresAt).toLocaleString('mn-MN')} хүртэл хүчинтэй.`}</p>
-            <div className="invite-box">
-              <code>{inviteUrl}</code>
-              <button className="btn secondary" onClick={shareInvite}>{copied ? 'Хууллаа' : 'Хуваалцах'}</button>
-            </div>
-          </>
-        )}
+      {error && <div className="s-note error">{error}</div>}
 
-        <h2>Гишүүд ({group.members.length})</h2>
-        <ul className="friend-list">
+      {/* Invite */}
+      {inviteUrl && (
+        <section className="s-card">
+          <h2>Урилгын холбоос</h2>
+          <p className="s-desc">
+            Холбоосыг нээсэн хүн бүр (бүртгэлгүй ч) өөрийн байршлаас ирэх замаа Google Maps-ээр авна.
+            {group.inviteExpiresAt && <> <strong>{new Date(group.inviteExpiresAt).toLocaleString('mn-MN',
+              { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</strong> хүртэл хүчинтэй.</>}
+          </p>
+          <div className="invite-box">
+            <Icon name="link" size={16} />
+            <code>{inviteUrl}</code>
+            <button className="btn small-btn" onClick={shareInvite}>
+              {copied ? '✓ Хуулсан' : <><Icon name="share" size={14} /> Хуваалцах</>}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* Options are chosen on the map */}
+      {planning && (
+        <section className="s-card choose-card">
+          <span className="intro-icon"><Icon name="layers" size={24} /></span>
+          <span className="r-main">
+            <span className="t-title">Уулзах газраа сонгох</span>
+            <span className="t-desc">Бүгдэд тохирох газруудыг газрын зураг дээр, гишүүн бүрээс очих замтай нь харуулна.</span>
+          </span>
+          <Link className="btn" to={`/?group=${group.id}`}>Газрын зураг дээр харах</Link>
+        </section>
+      )}
+
+      {/* Members */}
+      <section className="s-card">
+        <h2>Гишүүд <span className="count muted-count">{group.members.length}</span></h2>
+        <ul className="people">
           {group.members.map((m) => (
             <li key={m.id}>
-              <span className="person">
-                <span className="avatar small">{m.name.trim().charAt(0).toUpperCase()}</span>
-                <span className="r-main">
-                  <span className="r-name">{m.name}{m.me ? ' (та)' : ''}{m.role === 'INITIATOR' ? ' · санаачлагч' : ''}</span>
-                  <span className="r-sub">
-                    {m.guest ? 'зочин' : m.usesInterests ? 'сонирхол тооцогдоно' : 'сонирхол тооцогдохгүй'}
-                    {m.startSource && ` · эхлэх: ${START_LABELS[m.startSource]}`}
-                    {m.travelMinutes != null && ` · ~${m.travelMinutes} мин`}
-                  </span>
+              <Avatar name={m.name} />
+              <span className="r-main">
+                <span className="r-name">
+                  {m.name}
+                  {m.me && <span className="tag">та</span>}
+                  {m.role === 'INITIATOR' && <span className="tag primary">санаачлагч</span>}
+                  {m.guest && <span className="tag">зочин</span>}
+                </span>
+                <span className="r-sub">
+                  {[
+                    m.startSource ? START_LABELS[m.startSource] : null,
+                    m.travelMinutes != null ? `~${m.travelMinutes} мин` : null,
+                    !m.guest && !m.usesInterests ? 'сонирхол тооцохгүй' : null,
+                  ].filter(Boolean).join(' · ')}
                 </span>
               </span>
-              {planning ? (
-                <select value={m.transportMode} disabled={busy} onChange={(e) => changeMode(m, e.target.value as TransportMode)}>
-                  {Object.entries(TRANSPORT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select>
-              ) : <span className="muted">{TRANSPORT_LABELS[m.transportMode]}</span>}
-              {group.initiator && !m.me && m.mapsUrl && (
-                <a className="link" href={m.mapsUrl} target="_blank" rel="noopener noreferrer">Maps</a>
-              )}
-              {planning && m.role !== 'INITIATOR' && (
-                <button className="rec-x" title="Хасах" disabled={busy} onClick={() => remove(m)}>✕</button>
-              )}
+              <span className="member-side">
+                {planning ? (
+                  <select className="mini-select" value={m.transportMode} disabled={busy}
+                          onChange={(e) => changeMode(m, e.target.value as TransportMode)} aria-label="Тээвэр">
+                    {Object.entries(TRANSPORT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                ) : <span className="mode-pill">{TRANSPORT_LABELS[m.transportMode]}</span>}
+                {group.initiator && !m.me && m.mapsUrl && (
+                  <a className="ghost-btn" href={m.mapsUrl} target="_blank" rel="noopener noreferrer" title="Энэ гишүүний зам">Зам</a>
+                )}
+                {planning && m.role !== 'INITIATOR' && (
+                  <button className="icon-x" title="Хасах" aria-label="Хасах" disabled={busy} onClick={() => remove(m)}>✕</button>
+                )}
+              </span>
             </li>
           ))}
         </ul>
+      </section>
 
-        {planning && (
-          <>
-            <h2>Уулзах газар</h2>
-            <button className="btn" disabled={busy} onClick={loadOptions}>
-              {busy ? 'Тооцоолж байна…' : options ? 'Дахин санал болгох' : 'Хувилбар авах'}
-            </button>
-            {options && options.options.length === 0 && (
-              <p className="muted">Бүгд цагтаа хүрэх тохирох газар олдсонгүй. Хугацаагаа нэмэх эсвэл тээврийн хэрэгслээ өөрчилнө үү.</p>
-            )}
-            <ol className="rec-list">
-              {options?.options.map((o, i) => (
-                <li key={o.recommendationId}>
-                  <div className="rec-main" style={{ cursor: 'default' }}>
-                    <span className="rec-num" style={{ background: MAIN_CATEGORY_COLORS[o.place.mainCategory] ?? '#888' }}>{i + 1}</span>
-                    <span className="r-main">
-                      <span className="r-name">{o.place.name}</span>
-                      <span className="r-sub">{o.place.categoryName} · хамгийн удаан ~{o.maxTravelMinutes} мин</span>
-                      <span className="r-sub">
-                        {Object.entries(o.travelMinutesByMember).map(([mid, t]) => `${nameOf(mid)} ${t}′`).join(' · ')}
-                      </span>
-                    </span>
-                  </div>
-                  <button className="btn" style={{ alignSelf: 'center' }} disabled={busy} onClick={() => share(o.place.id)}>Сонгох</button>
-                </li>
-              ))}
-            </ol>
-          </>
-        )}
-
-        {group.initiator && (group.status === 'RECOMMENDED' || group.status === 'SHARED') && (
-          <button className="btn danger" style={{ marginTop: 24 }} disabled={busy} onClick={cancel}>Төлөвлөгөөг цуцлах</button>
-        )}
-      </div>
+      {group.initiator && open && (
+        <button className="cancel-plan" disabled={busy} onClick={cancel}>Төлөвлөгөөг цуцлах</button>
+      )}
     </div>
   )
 }
